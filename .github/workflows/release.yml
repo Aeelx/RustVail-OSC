@@ -1,0 +1,35 @@
+name: Build and Add to Release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          target/release
+        key: ${{ runner.os }}-build-release
+          
+    - name: Build
+      run: |
+        cargo build -r
+      shell: bash
+      
+    - name: Upload to Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        cd target/release
+        gh release upload ${{ github.event.release.tag_name }} rustvail-osc.exe
+      shell: bash
