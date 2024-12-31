@@ -8,6 +8,9 @@
 ###### This is my first (rust) project where i actually try to make something good and stable, feel free to judge as hard as you want
 </div>
 
+## Screnshots
+![First screenshot](https://github.com/Aeelx/RustVail-OSC/blob/main/.github/Screen1.png)
+
 ## Features
 - Simple GUI for use in VR
 - No internet connectivity in any way (except for the OSC server)
