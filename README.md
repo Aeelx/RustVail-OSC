@@ -1,9 +1,11 @@
 <div align="center">
-# RustVail OSC
+
 ![RustVail OSC Logo](https://github.com/Aeelx/RustVail-OSC/blob/main/assets/RVO.png)
 
+# RustVail OSC
+
 #### Simple application to fake OSC trackers for VRChat
-######This is my first (rust) project where i actually try to make something good and stable, feel free to judge as hard as you want
+###### This is my first (rust) project where i actually try to make something good and stable, feel free to judge as hard as you want
 </div>
 
 ## Features
