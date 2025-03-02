@@ -1,11 +1,8 @@
-
 #![windows_subsystem = "windows"] //hide console
 
-use eframe::egui;
+mod osc_thread;
 
-extern crate nannou_osc;
-use nannou_osc::Type::Float;
-use nannou_osc::{Message, Sender};
+use eframe::egui;
 
 use std::collections::HashMap;
 use std::fs;
@@ -17,9 +14,12 @@ use std::thread::{self};
 #[derive(Clone)] //TODO: awkward name
 struct ThreadData {
     enabled: bool,
+    ip_address: String,
     height: f32,
     height_offset: f32,
     hip_enabled: bool,
+    left_foot_enabled: bool,
+    right_foot_enabled: bool,
     locked_to_headset: bool,
 }
 
@@ -27,10 +27,13 @@ impl ThreadData {
     fn default() -> Self {
         ThreadData {
             enabled: false,
+            ip_address: "127.0.0.1:9000".to_string(),
             height: 0.0,
             height_offset: 0.0,
             hip_enabled: true,
             locked_to_headset: false,
+            left_foot_enabled: true,
+            right_foot_enabled: true,
         }
     }
 }
@@ -49,80 +52,76 @@ fn main() {
     let (tx, rx) = mpsc::channel::<ThreadData>();
 
     //spawn second thread to handle OSC messages
-    thread::spawn(move || {
-        let osc_tx = Sender::bind()
-            .expect("Couldn't bind to default socket")
-            .connect("127.0.0.1:9000") //TODO: add way to set ip so you can run it on a computer if you're on quest
-            .expect("Couldn't connect to socket at address");
-
-        //hang thread until we get the first message from the first render
-        let mut data = rx.recv().unwrap();
-
-        //loop with timeout so we can send a value at least once a second even if the other thread stops/slows down rendering
-        loop {
-            match rx.recv_timeout(std::time::Duration::from_millis(300)) {
-                Ok(value) => data = value,
-                Err(mpsc::RecvTimeoutError::Timeout) => (),
-                Err(err) => panic!("Unexpected error: {:?}", err),
-            };
-
-            osc_loop(&osc_tx, &data)
-        }
+    let thread_info = thread::spawn(move || {
+        osc_thread::thread(rx);
     });
 
     // Initialize egui window
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/RVO.png")).unwrap();
     let window_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([490.0, 440.0])
+            .with_inner_size([490.0, 540.0])
             .with_icon(icon),
         ..Default::default()
     };
     let _ = eframe::run_native(
-        "RustVail OSC Beta v0.3",
+        format!("RustVail OSC Beta v{}", env!("CARGO_PKG_VERSION")).as_str(),
         window_options,
-        Box::new(|cc| Ok(Box::new(GuiApp::new(cc, thread_data, tx)))),
+        Box::new(|cc| {
+            Ok(Box::new(GuiApp::new(
+                cc,
+                thread_data.ip_address.clone(),
+                thread_data,
+                thread_info,
+                tx,
+            )))
+        }),
     );
 
     //TODO: awkward name
     struct GuiApp {
         thread_data: ThreadData,
+        thread_info: thread::JoinHandle<()>,
         thread_sender: mpsc::Sender<ThreadData>,
+        ui_ip_address: String,
     }
 
     impl GuiApp {
         fn new(
             cc: &eframe::CreationContext<'_>,
+            ui_ip_address: String,
             thread_data: ThreadData,
+            thread_info: thread::JoinHandle<()>,
             thread_sender: mpsc::Sender<ThreadData>,
         ) -> Self {
             cc.egui_ctx.set_zoom_factor(2.0);
             Self {
                 thread_data,
+                thread_info,
                 thread_sender,
+                ui_ip_address,
             }
         }
     }
 
-
-    //todo: too much logic in one place
     impl eframe::App for GuiApp {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             egui::CentralPanel::default().show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                         ui.heading("RustVail OSC");
+                        if self.thread_info.is_finished() {
+                            ui.label("Worker thread died, probably something bad happened, please try restarting the app.\n\nUsually this is caused by a bad config file or a bad ip address");
+                        }
                         ui.checkbox(&mut self.thread_data.enabled, "Enabled");
-                        ui.collapsing("Save/load config", |ui| {
-                            ui.label("Delete the config files if you're having issues");
-                            if ui.button("Save and auto load on next boot").clicked() {
+                        ui.collapsing("Config", |ui| {
+                            if ui.button("Save config").clicked() { //TODO: for the love of god, make this a checkbox or a switch
                                 save_config("RUSTVAIL-autoload.cfg", &self.thread_data);
                             }
-                            if ui.button("Reset app and disable auto load").clicked() {
-                                self.thread_data = ThreadData::default();
+                            ui.horizontal(|ui| {
+                            if ui.button("Remove saved configs").clicked() {
                                 //delete autoload config
                                 let result = std::fs::remove_file("RUSTVAIL-autoload.cfg");
-
                                 match result {
                                     Ok(_) => {
                                         // file removed
@@ -135,85 +134,60 @@ fn main() {
                                     }
                                 }
                             }
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                if ui.button("Manual save").clicked() {
-                                    save_config("RUSTVAIL-config.cfg", &self.thread_data);
-                                }
-                                if ui.button("Manual load").clicked() {
-                                    self.thread_data = parse_config("RUSTVAIL-config.cfg");
-                                }
+                            if ui.button("Reset app").clicked() {
+                                self.thread_data = ThreadData::default();
+                            }
                             });
+                            //ui.horizontal(|ui| {
+                            //    if ui.button("Manual save").clicked() {
+                            //        save_config("RUSTVAIL-config.cfg", &self.thread_data);
+                            //    }
+                            //    if ui.button("Manual load").clicked() {
+                            //        self.thread_data = parse_config("RUSTVAIL-config.cfg");
+                            //    }
+                            //});
                         });
                         ui.collapsing("About", |ui| {
-                            ui.label("RVOSC Beta v0.3"); 
+                            ui.label(format!("RVOSC Beta v{}", env!("CARGO_PKG_VERSION")));
                             ui.label("Made by Aelx with <3");
-                            ui.label("Licensed under MIT License Copyright (c) 2024 Aeelx");
+                            ui.label("Licensed under MIT License Copyright (c) 2025 Aeelx");
                             ui.label("https://github.com/Aeelx/RustVail-OSC");
                         });
                     });
                     ui.separator();
-                    ui.label(format!(
-                        "Current height:'{}', offset:{}",
-                        self.thread_data.height, self.thread_data.height_offset
-                    ));
-                    ui.add(
-                        egui::Slider::new(&mut self.thread_data.height, -3.0..=3.0).text("Height"),
-                    );
-                    if ui.button("Apply height to height offset").clicked() {
-                        self.thread_data.height_offset += self.thread_data.height;
-                        self.thread_data.height = 0.0;
-                    }
-                    ui.checkbox(
-                        &mut self.thread_data.locked_to_headset,
-                        "Lock trackers to headset",
-                    );
+                    ui.collapsing("Connection", |ui| {
+                        ui.label("IP address:");
+                        ui.text_edit_singleline(&mut self.ui_ip_address);
+                        if ui.button("Set new IP").clicked() {
+                            self.thread_data.ip_address = self.ui_ip_address.clone();
+                        }
+                    });
+                    ui.collapsing("Offsets", |ui| {
+                        ui.label(format!(
+                            "Current height:'{}', offset:{}",
+                            self.thread_data.height, self.thread_data.height_offset
+                        ));
+                        ui.add(
+                            egui::Slider::new(&mut self.thread_data.height, -3.0..=3.0)
+                                .text("Height"),
+                        );
+                        if ui.button("Apply height to height offset").clicked() {
+                            self.thread_data.height_offset += self.thread_data.height;
+                            self.thread_data.height = 0.0;
+                        }
+                    });
+                    ui.collapsing("Enabled trackers", |ui| {
+                        ui.checkbox(&mut self.thread_data.locked_to_headset, "Head (Lock OSC trackers to headset)");
+                        ui.checkbox(&mut self.thread_data.hip_enabled, "Hip");
+                        ui.checkbox(&mut self.thread_data.left_foot_enabled, "Left foot");
+                        ui.checkbox(&mut self.thread_data.right_foot_enabled, "Right foot");
+                    });
                     ui.separator();
-                    ui.checkbox(&mut self.thread_data.hip_enabled, "Hip tracker");
                 });
-                self.thread_sender.send(self.thread_data.clone()).unwrap();
+                //send thread data to thread and ignore errors because sometimes the thread has an heart attack
+                let _ = self.thread_sender.send(self.thread_data.clone());
             });
         }
-    }
-}
-
-fn osc_loop(osc_tx: &Sender<nannou_osc::Connected>, thread_data: &ThreadData) {
-    //check if we should send anything
-    if !thread_data.enabled {
-        return;
-    }
-
-    //create messages to send
-    let left_foot = Message {
-        addr: "/tracking/trackers/1/position".to_string(),
-        args: [Float(-0.1), Float(0.0 + thread_data.height), Float(0.0)].to_vec(),
-    };
-    let right_foot = Message {
-        addr: "/tracking/trackers/2/position".to_string(),
-        args: [Float(0.1), Float(0.0 + thread_data.height), Float(0.0)].to_vec(),
-    };
-    let hip = Message {
-        addr: "/tracking/trackers/3/position".to_string(),
-        args: [Float(0.0), Float(0.9 + thread_data.height), Float(0.0)].to_vec(),
-    };
-    let head_position = Message {
-        addr: "/tracking/trackers/head/position".to_string(),
-        args: [Float(0.0), Float(1.75 + thread_data.height), Float(0.0)].to_vec(),
-    };
-    let head_rotation = Message {
-        addr: "/tracking/trackers/head/rotation".to_string(),
-        args: [Float(0.0), Float(0.0), Float(0.0)].to_vec(),
-    };
-
-    //send only the messages that we should
-    osc_tx.send(left_foot).unwrap();
-    osc_tx.send(right_foot).unwrap();
-    if thread_data.hip_enabled {
-        osc_tx.send(hip).unwrap();
-    }
-    if thread_data.locked_to_headset {
-        osc_tx.send(head_position).unwrap();
-        osc_tx.send(head_rotation).unwrap();
     }
 }
 
@@ -243,6 +217,11 @@ fn parse_config(filename: &str) -> ThreadData {
             .unwrap()
             .parse::<bool>()
             .unwrap_or_default(),
+        ip_address: config
+            .get("ip_address")
+            .unwrap()
+            .parse::<String>()
+            .unwrap_or_default(),
         height: config
             .get("height")
             .unwrap()
@@ -253,13 +232,23 @@ fn parse_config(filename: &str) -> ThreadData {
             .unwrap()
             .parse::<f32>()
             .unwrap_or_default(),
+        locked_to_headset: config
+            .get("locked_to_headset")
+            .unwrap()
+            .parse::<bool>()
+            .unwrap_or_default(),
         hip_enabled: config
             .get("hip_enabled")
             .unwrap()
             .parse::<bool>()
             .unwrap_or_default(),
-        locked_to_headset: config
-            .get("locked_to_headset")
+        left_foot_enabled: config
+            .get("left_foot_enabled")
+            .unwrap()
+            .parse::<bool>()
+            .unwrap_or_default(),
+        right_foot_enabled: config
+            .get("right_foot_enabled")
             .unwrap()
             .parse::<bool>()
             .unwrap_or_default(),
@@ -272,7 +261,7 @@ fn parse_config(filename: &str) -> ThreadData {
 fn save_config(filename: &str, thread_data: &ThreadData) {
     let mut file = fs::File::create(filename).expect("Failed to create config file");
 
-    //make a hashmap of key=value pairs
+    //make a hashmap of key=value pairs TODO: use thread_data struct to define keys
     let mut config = HashMap::new();
     config.insert("enabled".to_string(), thread_data.enabled.to_string());
     config.insert("height".to_string(), thread_data.height.to_string());
@@ -283,6 +272,14 @@ fn save_config(filename: &str, thread_data: &ThreadData) {
     config.insert(
         "hip_enabled".to_string(),
         thread_data.hip_enabled.to_string(),
+    );
+    config.insert(
+        "left_foot_enabled".to_string(),
+        thread_data.left_foot_enabled.to_string(),
+    );
+    config.insert(
+        "right_foot_enabled".to_string(),
+        thread_data.right_foot_enabled.to_string(),
     );
     config.insert(
         "locked_to_headset".to_string(),
