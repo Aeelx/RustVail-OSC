@@ -1,11 +1,11 @@
-use crate::ThreadData;
+use crate::Configs;
 use nannou_osc::Type::Float;
 use nannou_osc::{Message, Sender};
 use std::sync::mpsc;
 
 
 
-pub fn thread(rx: mpsc::Receiver<ThreadData>) {
+pub fn thread(rx: mpsc::Receiver<Configs>) {
     //hang thread until we get the first message from the first render
     let mut data = rx.recv().unwrap();
 
@@ -34,7 +34,7 @@ pub fn thread(rx: mpsc::Receiver<ThreadData>) {
     }
 }
 
-fn osc_loop(osc_tx: &Sender<nannou_osc::Connected>, thread_data: &ThreadData) {
+fn osc_loop(osc_tx: &Sender<nannou_osc::Connected>, thread_data: &Configs) {
     //check if we should send anything
     if !thread_data.enabled {
         return;
