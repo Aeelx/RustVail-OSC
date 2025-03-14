@@ -6,8 +6,12 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
     steps:
     - uses: actions/checkout@v3
 
@@ -27,9 +31,19 @@ jobs:
       shell: bash
       
     - name: Upload to Release
+      if: matrix.os == 'windows-latest'
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         cd target/release
         gh release upload ${{ github.event.release.tag_name }} rustvail-osc.exe
+      shell: bash
+    
+    - name: Upload to Release
+      if: matrix.os == 'ubuntu-latest'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        cd target/release
+        gh release upload ${{ github.event.release.tag_name }} rustvail-osc
       shell: bash
