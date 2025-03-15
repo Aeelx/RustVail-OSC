@@ -14,6 +14,9 @@
 
 ###### This is my first (rust) project where i actually try to make something good and stable, feel free to judge as hard as you want
 
+[![Download](https://img.shields.io/badge/Download-white?style=for-the-badge
+)](https://github.com/Aeelx/RustVail-OSC/releases/)
+
 ## Screnshots
 
 ![First screenshot](https://github.com/Aeelx/RustVail-OSC/blob/main/.github/Screen1.png)
